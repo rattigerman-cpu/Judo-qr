@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Lector QR de asistencia</title>
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="libs/html5-qrcode.min.js"></script>
+  <style>
+    :root {
+      --navy: #17365d;
+      --blue: #1f4e78;
+      --green: #287a3d;
+      --green-light: #e6f4ea;
+      --yellow: #fff8df;
+      --red: #a71d2a;
+      --red-light: #fdebed;
+      --ink: #1f2937;
+      --muted: #5b6573;
+      --line: #d9e2f3;
+      --surface: #ffffff;
+      --bg: #f5f8fb;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+    header { background: var(--navy); color: white; padding: calc(20px + env(safe-area-inset-top, 0px)) max(18px, calc((100vw - 1120px) / 2)) 20px; }
+    h1 { font-size: clamp(22px, 3vw, 30px); margin: 0 0 6px; }
+    header p { margin: 0; color: #dbeafe; }
+    main { max-width: 1120px; margin: 24px auto 40px; padding: 0 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 20px; align-items: start; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 3px 12px rgba(23,54,93,.06); padding: 20px; }
+    .card h2 { font-size: 18px; color: var(--navy); margin: 0 0 12px; }
+    .card p { line-height: 1.45; }
+    .drop { border: 2px dashed #9bb6d4; border-radius: 10px; padding: 18px; background: #f8fbfe; }
+    label { display: block; font-weight: 700; margin-bottom: 8px; }
+    input[type="file"], input[type="text"] { width: 100%; font: inherit; }
+    input[type="file"] { padding: 8px 0; }
+    input[type="text"] { border: 1px solid #a8b8c8; border-radius: 7px; padding: 11px; }
+    button { border: 0; border-radius: 7px; padding: 11px 15px; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    .primary { background: var(--green); color: white; }
+    .secondary { background: #e8eff6; color: var(--navy); }
+    .danger { background: #f1dadd; color: #7d1220; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+    .status { border-radius: 8px; padding: 12px; margin: 14px 0 0; line-height: 1.4; }
+    .status.info { background: #eaf3fb; color: #174b77; }
+    .status.success { background: var(--green-light); color: #1f6934; }
+    .status.warning { background: var(--yellow); color: #735906; }
+    .status.error { background: var(--red-light); color: var(--red); }
+    #reader { width: min(100%, 480px); min-height: 42px; margin: 14px auto 0; overflow: hidden; border-radius: 10px; }
+    .manual { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+    .hidden { display: none; }
+    .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 13px 0; }
+    .fact { background: #f8fbfe; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+    .fact strong { display: block; color: var(--navy); font-size: 18px; }
+    .fact span { font-size: 13px; color: var(--muted); }
+    .log { margin-top: 20px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+    th { background: var(--blue); color: white; }
+    .note { font-size: 13px; color: var(--muted); }
+    .privacy { margin-top: 18px; border-left: 4px solid #e3bb35; padding: 10px 12px; background: #fffdf5; color: #684f04; font-size: 14px; line-height: 1.4; }
+    .restore { margin-bottom: 20px; border-color: #e3bb35; background: #fffdf5; }
+    .restore h2 { color: #684f04; }
+    .autosave { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+    .autosave.error { color: var(--red); font-weight: 700; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { margin-top: 16px; } .card { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Lector QR de asistencia</h1>
+    <p>Escaneá la credencial, registrá la asistencia y descargá el Excel actualizado.</p>
+  </header>
+
+  <main>
+    <section id="restore-card" class="card restore hidden">
+      <h2>Hay una jornada sin cerrar</h2>
+      <p id="restore-text"></p>
+      <div class="button-row">
+        <button id="restore-button" class="primary" type="button">Restaurar jornada</button>
+        <button id="discard-button" class="danger" type="button">Descartar</button>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>1. Abrí la planilla</h2>
+        <div class="drop">
+          <label for="excel-file">Elegí el Excel de asistencia</label>
+          <input id="excel-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <p class="note">Usá la plantilla entregada. El lector necesita las hojas <strong>Socios</strong> y <strong>Asistencias</strong> con sus encabezados sin cambios.</p>
+        </div>
+        <div id="workbook-status" class="status info">Esperando la planilla.</div>
+        <div id="workbook-details" class="facts hidden">
+          <div class="fact"><strong id="member-count">0</strong><span>socios cargados</span></div>
+          <div class="fact"><strong id="session-count">0</strong><span>lecturas agregadas</span></div>
+        </div>
+        <p id="autosave-status" class="autosave hidden"></p>
+        <div class="button-row">
+          <button id="save-button" class="primary" type="button" disabled>Guardar / compartir Excel actualizado</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Escaneá el QR</h2>
+        <p class="note">Primero cargá la planilla. Al iniciar, Android pedirá permiso para usar la cámara.</p>
+        <div class="button-row">
+          <button id="start-button" class="primary" type="button" disabled>Iniciar cámara</button>
+          <button id="stop-button" class="danger" type="button" disabled>Detener cámara</button>
+        </div>
+        <div id="reader" class="hidden"></div>
+        <div id="scan-status" class="status info">Todavía no hay lecturas.</div>
+        <div class="manual">
+          <label for="manual-code">Ingreso manual</label>
+          <input id="manual-code" type="text" placeholder="Pegá o escribí el código del QR">
+          <div class="button-row"><button id="manual-button" class="secondary" type="button" disabled>Registrar código</button></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="log card">
+      <h2>Últimas lecturas de esta sesión</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Hora</th><th>Socio</th><th>Resultado</th><th>Código leído</th></tr></thead>
+          <tbody id="log-body"><tr><td colspan="4" class="note">Sin lecturas todavía.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="privacy"><strong>Privacidad:</strong> la planilla se procesa en este teléfono. La aplicación no la sube a ningún servidor ni necesita Internet. Mientras escaneás, la app se autoguarda en la memoria interna del teléfono (no se sube a ningún lado), así que no perdés lecturas si se cierra. Al terminar, generá una copia del Excel y enviala o guardala donde quieras.</p>
+  </main>
+
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const ui = {
+      file: $("#excel-file"), workbookStatus: $("#workbook-status"), workbookDetails: $("#workbook-details"),
+      memberCount: $("#member-count"), sessionCount: $("#session-count"), save: $("#save-button"),
+      start: $("#start-button"), stop: $("#stop-button"), reader: $("#reader"), scanStatus: $("#scan-status"),
+      manualCode: $("#manual-code"), manual: $("#manual-button"), log: $("#log-body"),
+      autosaveStatus: $("#autosave-status"), restoreCard: $("#restore-card"), restoreText: $("#restore-text"),
+      restore: $("#restore-button"), discard: $("#discard-button"),
+    };
+
+    let state = null;
+    let scanner = null;
+    let scannerRunning = false;
+    let lastRead = { value: "", at: 0 };
+
+    function normalizeHeader(value) {
+      return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase().trim().replace(/\s+/g, " ");
+    }
+
+    function cleanValue(value) {
+      return String(value ?? "").trim().replace(/\s+/g, " ");
+    }
+
+    function sameIdentifier(left, right) {
+      return cleanValue(left) !== "" && cleanValue(left) === cleanValue(right);
+    }
+
+    function setStatus(target, message, kind = "info") {
+      target.textContent = message;
+      target.className = `status ${kind}`;
+    }
+
+    function showControls(enabled) {
+      ui.start.disabled = !enabled;
+      ui.manual.disabled = !enabled;
+      ui.save.disabled = !enabled;
+      ui.workbookDetails.classList.toggle("hidden", !enabled);
+    }
+
+    function findColumn(headers, alternatives) {
+      const normalized = headers.map(normalizeHeader);
+      for (const alternative of alternatives) {
+        const index = normalized.indexOf(alternative);
+        if (index >= 0) return index;
+      }
+      return -1;
+    }
+
+    function findSheetModel(workbook, name, kind) {
+      const ws = workbook.Sheets[name];
+      if (!ws) throw new Error(`No se encontró la hoja “${name}”.`);
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", blankrows: true, raw: true });
+      const options = kind === "socios"
+        ? {
+            id: ["id socio", "codigo socio", "socio"],
+            dni: ["dni", "documento", "numero de documento"],
+            nombre: ["apellido y nombre", "nombre", "socio"],
+            qr: ["codigo qr", "identificador qr", "qr"],
+            activo: ["activo"],
+            cuota: ["estado de cuota", "estado"],
+          }
+        : {
+            fecha: ["fecha"], hora: ["hora"], id: ["id socio", "codigo socio", "socio"],
+            dni: ["dni", "documento", "numero de documento"], nombre: ["apellido y nombre", "nombre"],
+            qr: ["codigo qr leido", "codigo qr", "qr leido"], resultado: ["resultado"], observaciones: ["observaciones", "observacion"],
+          };
+
+      for (let row = 0; row < Math.min(data.length, 30); row += 1) {
+        const headers = data[row];
+        const columns = Object.fromEntries(Object.entries(options).map(([key, values]) => [key, findColumn(headers, values)]));
+        const works = kind === "socios"
+          ? columns.id >= 0 && columns.nombre >= 0 && (columns.dni >= 0 || columns.qr >= 0)
+          : columns.fecha >= 0 && columns.hora >= 0 && columns.resultado >= 0;
+        if (works) return { name, ws, data, headerRow: row, columns };
+      }
+      throw new Error(`No se pudieron reconocer los encabezados de la hoja “${name}”. Usá la plantilla entregada.`);
+    }
+
+    function records(model) {
+      return model.data.slice(model.headerRow + 1).filter((row) => row.some((cell) => cleanValue(cell) !== ""));
+    }
+
+    function localDateKey(date) {
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, "0");
+      const dd = String(date.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    // Convierte un Date a números de Excel usando la hora LOCAL del teléfono,
+    // para que el Excel muestre exactamente la hora que ves en pantalla.
+    function excelLocalParts(date) {
+      const day = Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
+      const seconds = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+      return { day, time: seconds / 86400 };
+    }
+
+    function dateKeyFromCell(value) {
+      if (value instanceof Date && !Number.isNaN(value.valueOf())) return localDateKey(value);
+      if (typeof value === "number" && XLSX.SSF && XLSX.SSF.parse_date_code) {
+        const parts = XLSX.SSF.parse_date_code(value);
+        if (parts) return `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`;
+      }
+      const text = cleanValue(value);
+      const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+      const latam = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (latam) return `${latam[3]}-${latam[2].padStart(2, "0")}-${latam[1].padStart(2, "0")}`;
+      return "";
+    }
+
+    function nextFreeRow(model) {
+      const usedColumns = Object.values(model.columns).filter((index) => index >= 0);
+      let last = model.headerRow;
+      for (let row = model.headerRow + 1; row <= model.data.length; row += 1) {
+        if (usedColumns.some((column) => cleanValue(model.data[row]?.[column]) !== "")) last = row;
+      }
+      return last + 1;
+    }
+
+    function updateRange(ws, row, col) {
+      const current = XLSX.utils.decode_range(ws["!ref"] || "A1");
+      current.e.r = Math.max(current.e.r, row);
+      current.e.c = Math.max(current.e.c, col);
+      ws["!ref"] = XLSX.utils.encode_range(current);
+    }
+
+    function writeCell(ws, row, col, value, kind) {
+      if (col < 0) return;
+      const address = XLSX.utils.encode_cell({ r: row, c: col });
+      const templateAddress = XLSX.utils.encode_cell({ r: state.attendance.headerRow + 1, c: col });
+      const template = ws[templateAddress];
+      const cell = kind === "date"
+        ? { t: "n", v: excelLocalParts(value).day, z: "dd/mm/yyyy" }
+        : kind === "time"
+          ? { t: "n", v: excelLocalParts(value).time, z: "hh:mm:ss" }
+          : { t: "s", v: String(value ?? "") };
+      if (template?.s) cell.s = template.s;
+      ws[address] = cell;
+      updateRange(ws, row, col);
+    }
+
+    function findMember(code) {
+      const candidates = records(state.members);
+      const c = state.members.columns;
+      const byQr = c.qr >= 0 ? candidates.filter((row) => sameIdentifier(row[c.qr], code)) : [];
+      if (byQr.length === 1) return { row: byQr[0] };
+      if (byQr.length > 1) return { error: "Hay más de un socio con este Código QR. Corregí el padrón antes de continuar." };
+      const byDni = c.dni >= 0 ? candidates.filter((row) => sameIdentifier(row[c.dni], code)) : [];
+      if (byDni.length === 1) return { row: byDni[0] };
+      if (byDni.length > 1) return { error: "Hay más de un socio con este DNI. Corregí el padrón antes de continuar." };
+      return { row: null };
+    }
+
+    function alreadyLoggedToday(member, code) {
+      const c = state.attendance.columns;
+      const memberId = state.members.columns.id >= 0 ? cleanValue(member[state.members.columns.id]) : "";
+      return records(state.attendance).some((row) => {
+        if (dateKeyFromCell(row[c.fecha]) !== localDateKey(new Date())) return false;
+        const sameId = memberId && c.id >= 0 && sameIdentifier(row[c.id], memberId);
+        const sameQr = c.qr >= 0 && sameIdentifier(row[c.qr], code);
+        return sameId || sameQr;
+      });
+    }
+
+    function appendRecord(member, code, result, observation) {
+      const a = state.attendance;
+      const m = state.members.columns;
+      const rowIndex = nextFreeRow(a);
+      const now = new Date();
+      writeCell(a.ws, rowIndex, a.columns.fecha, now, "date");
+      writeCell(a.ws, rowIndex, a.columns.hora, now, "time");
+      writeCell(a.ws, rowIndex, a.columns.id, member && m.id >= 0 ? member[m.id] : "");
+      writeCell(a.ws, rowIndex, a.columns.dni, member && m.dni >= 0 ? member[m.dni] : "");
+      writeCell(a.ws, rowIndex, a.columns.nombre, member && m.nombre >= 0 ? member[m.nombre] : "");
+      writeCell(a.ws, rowIndex, a.columns.qr, code);
+      writeCell(a.ws, rowIndex, a.columns.resultado, result);
+      writeCell(a.ws, rowIndex, a.columns.observaciones, observation);
+
+      const newRow = Array(Math.max(...Object.values(a.columns).filter((v) => v >= 0)) + 1).fill("");
+      Object.entries(a.columns).forEach(([key, column]) => {
+        if (column < 0) return;
+        if (key === "fecha") newRow[column] = excelLocalParts(now).day;
+        if (key === "hora") newRow[column] = excelLocalParts(now).time;
+        if (key === "id") newRow[column] = member && m.id >= 0 ? member[m.id] : "";
+        if (key === "dni") newRow[column] = member && m.dni >= 0 ? member[m.dni] : "";
+        if (key === "nombre") newRow[column] = member && m.nombre >= 0 ? member[m.nombre] : "";
+        if (key === "qr") newRow[column] = code;
+        if (key === "resultado") newRow[column] = result;
+        if (key === "observaciones") newRow[column] = observation;
+      });
+      a.data[rowIndex] = newRow;
+      return now;
+    }
+
+    function renderLog(time, member, result, code) {
+      const name = member && state.members.columns.nombre >= 0 ? cleanValue(member[state.members.columns.nombre]) : "—";
+      if (ui.log.children.length === 1 && ui.log.textContent.includes("Sin lecturas")) ui.log.innerHTML = "";
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${time.toLocaleTimeString()}</td><td>${escapeHtml(name)}</td><td>${escapeHtml(result)}</td><td>${escapeHtml(code)}</td>`;
+      ui.log.prepend(row);
+      while (ui.log.children.length > 8) ui.log.lastElementChild.remove();
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+    }
+
+    // ===== Autoguardado interno =====
+    // En la app Android se guarda en la carpeta privada de la app (Filesystem/DATA).
+    // En un navegador común se usa localStorage como respaldo.
+    const AUTOSAVE_XLSX = "autosave_asistencia.xlsx";
+    const AUTOSAVE_META = "autosave_asistencia.json";
+    const AUTOSAVE_LS = "autosave_asistencia";
+
+    const autosave = {
+      plugin() { return isNativeApp() ? window.Capacitor.Plugins.Filesystem : null; },
+      async save(meta, base64) {
+        const fs = this.plugin();
+        if (fs) {
+          await fs.writeFile({ path: AUTOSAVE_XLSX, data: base64, directory: "DATA" });
+          await fs.writeFile({ path: AUTOSAVE_META, data: JSON.stringify(meta), directory: "DATA", encoding: "utf8" });
+        } else {
+          localStorage.setItem(AUTOSAVE_LS, JSON.stringify({ meta, base64 }));
+        }
+      },
+      async meta() {
+        try {
+          const fs = this.plugin();
+          if (fs) {
+            const res = await fs.readFile({ path: AUTOSAVE_META, directory: "DATA", encoding: "utf8" });
+            return JSON.parse(res.data);
+          }
+          const raw = localStorage.getItem(AUTOSAVE_LS);
+          return raw ? JSON.parse(raw).meta : null;
+        } catch (_) { return null; }
+      },
+      async load() {
+        const meta = await this.meta();
+        if (!meta) return null;
+        const fs = this.plugin();
+        if (fs) {
+          const res = await fs.readFile({ path: AUTOSAVE_XLSX, directory: "DATA" });
+          return { meta, base64: res.data };
+        }
+        return { meta, base64: JSON.parse(localStorage.getItem(AUTOSAVE_LS)).base64 };
+      },
+      async clear() {
+        try {
+          const fs = this.plugin();
+          if (fs) {
+            await fs.deleteFile({ path: AUTOSAVE_META, directory: "DATA" }).catch(() => {});
+            await fs.deleteFile({ path: AUTOSAVE_XLSX, directory: "DATA" }).catch(() => {});
+          } else {
+            localStorage.removeItem(AUTOSAVE_LS);
+          }
+        } catch (_) { /* nada que borrar */ }
+      },
+    };
+
+    function setAutosaveText(message, isError) {
+      ui.autosaveStatus.textContent = message;
+      ui.autosaveStatus.className = "autosave" + (isError ? " error" : "");
+    }
+
+    let autosaveRunning = false;
+    let autosavePending = false;
+    async function requestAutosave() {
+      if (!state || state.sessionRows === 0) return;
+      if (autosaveRunning) { autosavePending = true; return; }
+      autosaveRunning = true;
+      try {
+        do {
+          autosavePending = false;
+          const base64 = XLSX.write(state.workbook, { bookType: "xlsx", type: "base64", cellDates: true, compression: true });
+          const meta = { filename: state.filename, sessionRows: state.sessionRows, savedAt: Date.now() };
+          await autosave.save(meta, base64);
+          setAutosaveText(`Autoguardado a las ${new Date(meta.savedAt).toLocaleTimeString()} · ${meta.sessionRows} lectura(s)`, false);
+        } while (autosavePending);
+      } catch (error) {
+        setAutosaveText("No se pudo autoguardar: " + (error && error.message ? error.message : error) + ". Guardá el Excel manualmente.", true);
+      } finally {
+        autosaveRunning = false;
+      }
+    }
+
+    async function offerRestore() {
+      const meta = await autosave.meta();
+      if (!meta || !(meta.sessionRows > 0)) return;
+      const when = new Date(meta.savedAt).toLocaleString();
+      ui.restoreText.textContent = `Se autoguardó «${meta.filename}» con ${meta.sessionRows} lectura(s) el ${when}. Si ya guardaste ese Excel, podés descartarla.`;
+      ui.restoreCard.classList.remove("hidden");
+    }
+
+    async function restoreSession() {
+      ui.restore.disabled = true;
+      try {
+        const saved = await autosave.load();
+        if (!saved) throw new Error("No se encontró el autoguardado.");
+        const workbook = XLSX.read(saved.base64, { type: "base64", cellNF: true, cellStyles: true, sheetStubs: true });
+        initState(workbook, saved.meta.filename, saved.meta.sessionRows || 0);
+        ui.restoreCard.classList.add("hidden");
+        setStatus(ui.workbookStatus, `Jornada restaurada: ${saved.meta.filename} (${state.sessionRows} lectura(s)).`, "success");
+        setStatus(ui.scanStatus, "Listo para seguir escaneando.", "info");
+        setAutosaveText(`Restaurado del autoguardado de ${new Date(saved.meta.savedAt).toLocaleString()}`, false);
+        ui.autosaveStatus.classList.remove("hidden");
+      } catch (error) {
+        setStatus(ui.workbookStatus, "No se pudo restaurar: " + (error.message || error), "error");
+      } finally {
+        ui.restore.disabled = false;
+      }
+    }
+
+    async function discardSession() {
+      if (!confirm("¿Descartar las lecturas autoguardadas? Esta acción no se puede deshacer.")) return;
+      await autosave.clear();
+      ui.restoreCard.classList.add("hidden");
+    }
+
+    function registerCode(rawCode) {
+      if (!state) return;
+      const code = cleanValue(rawCode);
+      if (!code) return;
+      const nowMs = Date.now();
+      if (lastRead.value === code && nowMs - lastRead.at < 2200) return;
+      lastRead = { value: code, at: nowMs };
+
+      const found = findMember(code);
+      if (found.error) {
+        setStatus(ui.scanStatus, found.error, "error");
+        return;
+      }
+      let result = "Registrada";
+      let note = "";
+      const member = found.row;
+      if (!member) {
+        result = "No encontrado";
+        note = "El código leído no figura en el padrón.";
+      } else if (state.members.columns.activo >= 0 && normalizeHeader(member[state.members.columns.activo]) === "no") {
+        result = "Rechazada";
+        note = "El socio figura como inactivo en el padrón.";
+      } else if (alreadyLoggedToday(member, code)) {
+        result = "QR duplicado";
+        note = "Ya existe una asistencia de hoy para este socio o QR.";
+      } else if (state.members.columns.cuota >= 0 && normalizeHeader(member[state.members.columns.cuota]) === "vencido") {
+        result = "Cuota vencida";
+        note = "La asistencia quedó registrada. Revisá el estado de cuota.";
+      }
+      const time = appendRecord(member, code, result, note);
+      state.sessionRows += 1;
+      ui.sessionCount.textContent = state.sessionRows;
+      renderLog(time, member, result, code);
+      const name = member && state.members.columns.nombre >= 0 ? `: ${cleanValue(member[state.members.columns.nombre])}` : "";
+      const kind = result === "Registrada" ? "success" : result === "QR duplicado" || result === "Cuota vencida" ? "warning" : "error";
+      setStatus(ui.scanStatus, `${result}${name}. ${note}`.trim(), kind);
+      ui.manualCode.value = "";
+      ui.autosaveStatus.classList.remove("hidden");
+      requestAutosave();
+    }
+
+    function initState(workbook, filename, sessionRows) {
+      const members = findSheetModel(workbook, "Socios", "socios");
+      const attendance = findSheetModel(workbook, "Asistencias", "asistencias");
+      state = { workbook, members, attendance, filename, sessionRows };
+      ui.memberCount.textContent = records(members).length;
+      ui.sessionCount.textContent = String(sessionRows);
+      showControls(true);
+    }
+
+    async function loadWorkbook(file) {
+      if (!window.XLSX) throw new Error("No se pudo cargar el componente para leer Excel. Reinstalá la aplicación.");
+      const bytes = await file.arrayBuffer();
+      const workbook = XLSX.read(bytes, { type: "array", cellNF: true, cellStyles: true, sheetStubs: true });
+      initState(workbook, file.name, 0);
+      await autosave.clear();
+      ui.restoreCard.classList.add("hidden");
+      ui.autosaveStatus.classList.add("hidden");
+      setStatus(ui.workbookStatus, `Planilla cargada: ${file.name}.`, "success");
+      setStatus(ui.scanStatus, "Listo para escanear. Iniciá la cámara o usá el ingreso manual.", "info");
+    }
+
+    async function startCamera() {
+      if (!state || !window.Html5Qrcode) {
+        setStatus(ui.scanStatus, "El lector de cámara no está disponible. Reiniciá la aplicación.", "error");
+        return;
+      }
+      if (scannerRunning) return;
+      ui.reader.classList.remove("hidden");
+      ui.start.disabled = true;
+      setStatus(ui.scanStatus, "Solicitando acceso a la cámara…", "info");
+      scanner = new Html5Qrcode("reader");
+      const config = { fps: 10, qrbox: { width: 260, height: 260 } };
+      try {
+        await scanner.start({ facingMode: "environment" }, config, registerCode, () => {});
+        scannerRunning = true;
+        ui.stop.disabled = false;
+        setStatus(ui.scanStatus, "Cámara lista. Mostrá el QR dentro del recuadro.", "success");
+      } catch (primaryError) {
+        try {
+          const cameras = await Html5Qrcode.getCameras();
+          if (!cameras.length) throw new Error("No se encontró una cámara disponible.");
+          await scanner.start(cameras[0].id, config, registerCode, () => {});
+          scannerRunning = true;
+          ui.stop.disabled = false;
+          setStatus(ui.scanStatus, "Cámara lista. Mostrá el QR dentro del recuadro.", "success");
+        } catch (fallbackError) {
+          ui.reader.classList.add("hidden");
+          ui.start.disabled = false;
+          setStatus(ui.scanStatus, "No se pudo abrir la cámara. Permití el acceso a la cámara en Ajustes › Aplicaciones › Lector QR Asistencia › Permisos. También podés registrar el código manualmente.", "error");
+        }
+      }
+    }
+
+    async function stopCamera() {
+      if (!scanner || !scannerRunning) return;
+      try { await scanner.stop(); } catch (_) { /* La cámara ya puede haber sido detenida por el navegador. */ }
+      scannerRunning = false;
+      ui.stop.disabled = true;
+      ui.start.disabled = !state;
+      ui.reader.classList.add("hidden");
+      setStatus(ui.scanStatus, "Cámara detenida.", "info");
+    }
+
+    function isNativeApp() {
+      return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+    }
+
+    async function saveWorkbook() {
+      if (!state) return;
+      const base = state.filename.replace(/\.xlsx$/i, "").replace(/_actualizado(_\d+)?$/i, "") || "asistencia";
+      const stamp = localDateKey(new Date());
+      const fileName = `${base}_actualizado_${stamp}.xlsx`;
+
+      if (!isNativeApp()) {
+        XLSX.writeFile(state.workbook, fileName, { bookType: "xlsx", cellDates: true, compression: true });
+        setStatus(ui.workbookStatus, "Se inició la descarga del Excel actualizado.", "success");
+        return;
+      }
+
+      try {
+        const { Filesystem, Share } = window.Capacitor.Plugins;
+        // Genera el .xlsx en base64 y lo guarda en el almacenamiento de la app
+        const base64 = XLSX.write(state.workbook, { bookType: "xlsx", type: "base64", cellDates: true, compression: true });
+        const saved = await Filesystem.writeFile({ path: fileName, data: base64, directory: "CACHE" });
+        setStatus(ui.workbookStatus, `Excel generado: ${fileName}. Elegí dónde guardarlo o enviarlo.`, "success");
+        await Share.share({ title: fileName, text: "Planilla de asistencia actualizada", url: saved.uri, dialogTitle: "Guardar o enviar el Excel" });
+      } catch (error) {
+        const cancelled = /cancel/i.test(String(error && (error.message || error)));
+        if (!cancelled) setStatus(ui.workbookStatus, "No se pudo guardar el Excel: " + (error.message || error), "error");
+      }
+    }
+
+    ui.file.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const pending = await autosave.meta();
+      if (pending && pending.sessionRows > 0 && !confirm(`Hay ${pending.sessionRows} lectura(s) autoguardadas de «${pending.filename}». Si abrís otra planilla se descartan. ¿Continuar?`)) {
+        ui.file.value = "";
+        return;
+      }
+      showControls(false);
+      setStatus(ui.workbookStatus, "Leyendo la planilla…", "info");
+      try { await loadWorkbook(file); } catch (error) { setStatus(ui.workbookStatus, error.message || "No se pudo abrir la planilla.", "error"); }
+    });
+    ui.start.addEventListener("click", startCamera);
+    ui.stop.addEventListener("click", stopCamera);
+    ui.manual.addEventListener("click", () => registerCode(ui.manualCode.value));
+    ui.manualCode.addEventListener("keydown", (event) => { if (event.key === "Enter") registerCode(ui.manualCode.value); });
+    ui.save.addEventListener("click", saveWorkbook);
+    ui.restore.addEventListener("click", restoreSession);
+    ui.discard.addEventListener("click", discardSession);
+    // Al pasar a segundo plano, forzar un último guardado
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") requestAutosave(); });
+    offerRestore();
+    window.addEventListener("beforeunload", () => { if (scannerRunning) scanner.stop().catch(() => {}); });
+  </script>
+</body>
+</html>
