@@ -1,0 +1,19 @@
+{
+  "name": "lector-asistencia-qr",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lector QR de asistencia (APK Android)",
+  "scripts": {
+    "libs": "node scripts/copiar-librerias.js",
+    "sync": "npm run libs && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/share": "^6.0.2",
+    "html5-qrcode": "^2.3.8",
+    "@e965/xlsx": "^0.20.3"
+  }
+}
